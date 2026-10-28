@@ -74,6 +74,7 @@ Before building any model, I checked whether the data could answer the question 
 6. **Alarm threshold.** I chose the threshold on cross-validated scores of the training runs, never on the test set, and cross-checked it with scikit-learn's automatic threshold tuning.
 7. **Interpretation.** I ranked the sensors with three methods (the random forest's own importance, permutation importance and the logistic regression coefficients) and compared the result with the statistical tests.
 8. **Drift check.** I used the Kolmogorov–Smirnov test to see which sensors read differently in the latest runs than before.
+9. **From model to app.** I saved the final model and built a small prototype app around it: an API that scores runs and a screen for engineers (see "Early-warning app" below).
 
 **How I measured success.** The main metric is PR-AUC (average precision). It measures how well a model puts the failing runs at the top of its list, on a scale from 0 to 1. Random guessing scores the share of fails, 0.067, so that's the bar to beat. The second metric is recall, the share of failing runs that get caught. For the fab I translate both into plain numbers: fails caught, and false alarms per caught fail.
 
@@ -164,7 +165,7 @@ What I would recommend to the fab:
 5. **Retrain on recent runs and check for drift regularly.** For example once a month and after every process change: run a drift test on the key sensors and review the threshold. A model trained once and left alone will get worse.
 6. **Collect more failing runs.** With 104 fails in total, every score is uncertain. More fail data is worth more than a more complex model or synthetic data: the neural network and resampling both didn't help.
 
-**How it could run in the fab.** The model would score each run as soon as its sensor data is complete, on the fab's own servers, so the data stays on site. An alarm would go to the process engineer together with the readings of the five key sensors. The engineer confirms or rejects each alarm, and those answers become new labels for the next retraining. I'd start in "shadow mode": run the model for a few weeks next to the normal process without acting on its alarms, and compare them with the final test results before anyone relies on it.
+**How it could run in the fab.** The model would score each run as soon as its sensor data is complete, on the fab's own servers, so the data stays on site. An alarm would go to the process engineer together with the readings of the five key sensors. The engineer confirms or rejects each alarm, and those answers become new labels for the next retraining. I'd start in "shadow mode": run the model for a few weeks next to the normal process without acting on its alarms, and compare them with the final test results before anyone relies on it. The prototype app below shows what the engineer's screen could look like.
 
 ### Limitations
 
@@ -181,11 +182,38 @@ What I would recommend to the fab:
 - Set the threshold from real costs: what a missed fail costs versus an engineer's time for a false alarm.
 - Collect more failing runs, and if more data becomes available, try separate models per tool or process step.
 
+## Early-warning app (prototype)
+
+To show how the model could be used day to day, I built a small app on top of it. It follows the usual steps for putting a model into use: the notebook saves the trained model to a file, an API serves it, and a simple screen calls the API.
+
+- The API (`app/api.py`, built with FastAPI) loads the model once and answers requests. You send it the sensor readings of one or many runs, and it returns a fail probability and an alarm for each one. Other systems in a fab, like a dashboard or the tool software, could call the same API.
+- The screen (`app/ui.py`, built with Streamlit) has two tabs. "Screen a batch of runs" scores a batch of runs (the 314 test runs, or your own CSV file) and shows how many alarms it raises and, when the real results are known, how many fails it caught. A slider moves the threshold, so you can watch the trade-off between caught fails and false alarms change. "Look at one run" shows a run's fail probability and where its five key sensors sit compared with passing runs, as a pointer for where an engineer could look first.
+
+On the sample runs the app gives exactly the notebook's result: 58 alarms at the 0.17 threshold, catching 12 of the 21 fails.
+
+![The batch screen with the 314 test runs](images/app_batch.png)
+
+*The batch screen with the 314 test runs. Each dot is a run, and every run to the right of the dashed line raises an alarm. At the 0.17 threshold it catches 12 of the 21 fails. Moving the slider down to 0.13 catches 16 of them, but the false alarms per caught fail go up from 3.8 to 6.5.*
+
+![One flagged run and its five key sensors](images/app_run.png)
+
+*Run 238 raised an alarm and really did fail. Three of its key sensors read higher than almost all passing runs (sensor_103 higher than 98% of them, sensor_205 than 96%, sensor_59 than 87%), so that's where an engineer would start looking.*
+
+**How to run it.** From the main folder of this repository, install the packages once, then start the API and the screen in two terminals:
+
+```
+pip install -r requirements.txt
+python -m fastapi dev app/api.py      # terminal 1: the model API at http://127.0.0.1:8000 (try it at /docs)
+python -m streamlit run app/ui.py     # terminal 2: the screen opens in the browser
+```
+
+It's a prototype: it runs on one computer, has no login and uses the model trained in the notebook. A real version would run on the fab's own servers with access control, and the model file would be replaced after every retraining.
+
 ## Outline of project
 
 - [Main notebook: `notebooks/secom_capstone.ipynb`](notebooks/secom_capstone.ipynb)
 
-The notebook tells the whole story in 11 sections:
+The notebook tells the whole story in 12 sections:
 
 1. Data Loading & Inspection
 2. Data Cleaning
@@ -197,7 +225,8 @@ The notebook tells the whole story in 11 sections:
 8. Choosing the Alarm Threshold
 9. Which Sensors Drive the Alarms?
 10. Checking the Model on Later Production
-11. Conclusions
+11. From Model to App: saving the model for the early-warning app
+12. Conclusions
 
 
 
@@ -205,12 +234,19 @@ The notebook tells the whole story in 11 sections:
 
 ```
 ├── README.md
+├── requirements.txt               # Python packages for the notebook and the app
 ├── data/                          # SECOM raw files (UCI)
 │   ├── secom.data                 # sensor readings
 │   ├── secom_labels.data          # pass/fail result + timestamp
 │   └── secom.names                # dataset description
 ├── notebooks/
 │   └── secom_capstone.ipynb       # the full analysis
+├── app/                           # early-warning app (prototype)
+│   ├── api.py                     # FastAPI service that scores runs
+│   ├── ui.py                      # Streamlit screen
+│   ├── secom_alarm_model.joblib   # saved model (created by the notebook, Section 11)
+│   ├── sample_runs.csv            # the 314 test runs as example data
+│   └── reference_pass_runs.csv    # key-sensor readings of passing runs
 └── images/                        # figures saved by the notebook
 ```
 
